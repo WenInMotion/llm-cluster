@@ -10,12 +10,11 @@ DEFAULT_SUMMARY_PROMPT = """
 Short, concise title for this cluster of related documents.
 """.strip()
 
-
 @llm.hookimpl
 def register_commands(cli):
     @cli.command()
     @click.argument("collection")
-    @click.argument("n", type=int)
+    @click.argument("n", type=float)
     @click.option(
         "--truncate",
         type=int,
@@ -36,27 +35,34 @@ def register_commands(cli):
     )
     @click.option("-m", "--model", help="LLM model to use for the summary")
     @click.option("--prompt", help="Custom prompt to use for the summary")
-    def cluster(collection, n, truncate, database, summary, model, prompt):
+    @click.option("-a", "--algorithm", type=click.Choice(['kmeans', 'dbscan'], case_sensitive=False), default='dbscan', help="Clustering algorithm to use ('kmeans' or 'dbscan').")
+    def cluster(collection, n, truncate, database, summary, model, prompt, algorithm):
         """
-        Generate clusters from embeddings in a collection
+        Generate clusters from embeddings in a collection.
 
-        Example usage, to create 10 clusters:
-
-        \b
-            llm cluster my_collection 10
-
-        Outputs a JSON array of {"id": "cluster_id", "items": [list of items]}
-
-        Pass --summary to generate a summary for each cluster, using the default
-        language model or the model you specify with --model.
+        For DBSCAN, the 'n' parameter refers to the 'eps' value. For effective tuning of 'eps',
+        it's recommended to start with a value based on the distance metric of your dataset.
+        Example usage:
+        - For DBSCAN: llm cluster my_collection 0.5 --algorithm dbscan
+        - For KMeans: llm cluster my_collection 5 --algorithm kmeans
         """
+
         from llm.cli import get_default_model, get_key
 
-        clustering_model = sklearn.cluster.MiniBatchKMeans(n_clusters=n, n_init="auto")
+        if algorithm.lower() == 'dbscan':
+            # Note: For DBSCAN, 'n' is used as the 'eps' parameter.
+            clustering_model = sklearn.cluster.DBSCAN(eps=n, min_samples=3)
+        elif algorithm.lower() == 'kmeans':
+            # For KMeans, 'n' needs to be an integer specifying the number of clusters.
+            if not n.is_integer():
+                raise ValueError("For KMeans, the 'n' parameter must be an integer specifying the number of clusters.")
+            clustering_model = sklearn.cluster.MiniBatchKMeans(n_clusters=int(n))
+        
         if database:
             db = sqlite_utils.Database(database)
         else:
             db = sqlite_utils.Database(llm.user_dir() / "embeddings.db")
+        
         rows = [
             (row[0], llm.decode(row[1]), row[2])
             for row in db.execute(
@@ -65,7 +71,7 @@ def register_commands(cli):
             where collection_id = (
                 select id from collections where name = ?
             )
-        """,
+            """,
                 [collection],
             ).fetchall()
         ]
@@ -73,6 +79,7 @@ def register_commands(cli):
         clustering_model.fit(to_cluster)
         assignments = clustering_model.labels_
 
+        # Helper function for text truncation
         def truncate_text(text):
             if not text:
                 return None
@@ -81,16 +88,16 @@ def register_commands(cli):
             else:
                 return text
 
-        # Each one corresponds to an ID
+        # Organizing clusters
         clusters = {}
         for (id, _, content), cluster in zip(rows, assignments):
             clusters.setdefault(str(cluster), []).append(
                 {"id": str(id), "content": truncate_text(content)}
             )
-        # Re-arrange into a list
+
         output_clusters = [{"id": k, "items": v} for k, v in clusters.items()]
 
-        # Do we need to generate summaries?
+        # Generating summaries if requested
         if summary:
             model = llm.get_model(model or get_default_model())
             if model.needs_key:
@@ -124,3 +131,4 @@ def register_commands(cli):
             click.echo("]")
         else:
             click.echo(json.dumps(output_clusters, indent=4))
+
