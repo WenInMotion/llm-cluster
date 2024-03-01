@@ -35,7 +35,7 @@ def register_commands(cli):
     )
     @click.option("-m", "--model", help="LLM model to use for the summary")
     @click.option("--prompt", help="Custom prompt to use for the summary")
-    @click.option("-a", "--algorithm", type=click.Choice(['kmeans', 'dbscan'], case_sensitive=False), default='dbscan', help="Clustering algorithm to use ('kmeans' or 'dbscan').")
+    @click.option("-a", "--algorithm", type=click.Choice(['kmeans', 'dbscan'], case_sensitive=False), default='kmeans', help="Clustering algorithm to use ('kmeans' or 'dbscan').")
     def cluster(collection, n, truncate, database, summary, model, prompt, algorithm):
         """
         Generate clusters from embeddings in a collection.
